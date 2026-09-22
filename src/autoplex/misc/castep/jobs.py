@@ -27,6 +27,7 @@ from autoplex.misc.castep.utils import (
     CASTEP_INPUT_FILES,
     CASTEP_OUTPUT_FILES,
     CastepInputGenerator,
+    CastepMagresSetGenerator,
     CastepStaticSetGenerator,
 )
 from autoplex.settings import SETTINGS
@@ -173,6 +174,7 @@ class BaseCastepMaker(Maker):
         run_castep(calc)
 
         workdir = os.path.join(os.getcwd(), "CASTEP")
+
         atoms = read(os.path.join(workdir, "castep.castep"))
         gzip_files(directory=workdir, include_files=_FILES_TO_ZIP, allow_missing=True)
 
@@ -235,3 +237,62 @@ class CastepStaticMaker(BaseCastepMaker):
 
     def __post_init__(self):  # noqa: D105
         self.name = f"{self.jobprefix}{self.name}"
+
+
+@dataclass
+class CastepMagresMaker(BaseCastepMaker):
+    """
+    Maker to create CASTEP magres (NMR prediction) jobs.
+
+    This class creates NMR predictions using CASTEP
+
+    Parameters
+    ----------
+    name : str
+        The job name (default: "magres").
+    input_set_generator : CastepInputGenerator
+        Generator used to create the CASTEP input set,
+        including .param and .cell settings.
+        (default: CastepMagresSetGenerator()).
+    jobprefix: str
+        The prefix that precedes the jobname.
+    """
+
+    name: str = "magres"
+    input_set_generator: CastepInputGenerator = field(
+        default_factory=CastepMagresSetGenerator
+    )
+    jobprefix: str = ""
+
+    def __post_init__(self):  # noqa: D105
+        self.name = f"{self.jobprefix}{self.name}"
+
+    @job
+    def make(self, structure):
+        """
+        Run a CASTEP magres (NMR) calculation and parse the .magres output.
+
+        Parameters
+        ----------
+        structure : Structure
+            A pymatgen structure object.
+
+        Returns
+        -------
+        TaskDoc
+            Task document with the magnetic shielding and EFG tensors added.
+        """
+        workdir = os.path.join(os.getcwd(), "CASTEP")
+
+        BaseTaskDoc = super().make.original(self, structure)
+
+        atoms = read(os.path.join(workdir, "castep.magres.gz"), format="magres")
+        # I'm not too sure what the magres file name will be
+        shielding = atoms.get_array("ms").tolist() if "ms" in atoms.arrays else None
+
+        efg = atoms.get_array("efg").tolist() if "efg" in atoms.arrays else None
+
+        BaseTaskDoc.output.ms_tensor = shielding
+        BaseTaskDoc.output.efg_tensor = efg
+
+        return BaseTaskDoc
